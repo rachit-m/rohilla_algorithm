@@ -3,11 +3,11 @@ import psycopg2
 import pdb
 
 
-def filter_list(thelist, id_score_map, group_flags):
+def filter_list(thelist, id_score_map, group_flags, locality_names):
     cluster = []
     for k in thelist:
         if k in id_score_map.keys() and group_flags[thelist.index(k)] == 1:
-            cluster.append(k)
+            cluster.append(locality_names[k])
     return cluster
 
 
@@ -32,7 +32,7 @@ def make_changes(thedict, id_group_map, group_flags, pivot):
                     group_flags[key][id_group_map[key].index(pivot)] - 1)
         return 1
     else:
-        if (del1 + del2) > 0:
+        if (del1 + del2) > 0.01:
             group_flags[ele1][id_group_map[ele1].index(pivot)] = abs(
                 group_flags[ele1][id_group_map[ele1].index(pivot)] - 1)
             group_flags[ele2][id_group_map[ele2].index(pivot)] = abs(
@@ -65,10 +65,11 @@ def cluster_sum(thelist, id_score_map, group_flags):
 
 
 def right_clusters():
-    with open('rohilla_scores.csv', 'rb') as csvfile:
+    with open('rohilla_score_all.csv', 'rb') as csvfile:
         spamreader = csv.reader(csvfile, delimiter=',', quotechar='|')
         cluster_sets = []
         setsum = 0
+	locality_names = dict()
         right_cluster = dict()
         id_score_map = dict()
         id_group_map = dict()
@@ -80,8 +81,14 @@ def right_clusters():
             "dbname='housing_analytics' user='dsl_readonly' password='dsl' host=127.0.0.1 port = 5436")
         cur = con.cursor()
         cur.execute(
-            'set search_path to public,postgis; select lo1.id,array_agg(lo2.id) from (select  id,boundary_polygon from localities where region_id = 2) lo1 cross join (select id, boundary_polygon from localities where region_id = 2) lo2  where  st_intersects(lo1.boundary_polygon, lo2.boundary_polygon) group by lo1.id;')
+            'set search_path to public,postgis; select lo1.id,array_agg(lo2.id) from (select  lo.id,lo.boundary_polygon from localities lo join regions re on re.id = lo.region_id where re.city_id = 1) lo1 cross join (select lo.id, lo.boundary_polygon from localities lo join regions re on re.id = lo.region_id  where re.city_id = 1) lo2  where  st_intersects(lo1.boundary_polygon, lo2.boundary_polygon) group by lo1.id;')
+
         data = cur.fetchall()
+	
+	cur.execute('select id,name from localities')
+	lnames = cur.fetchall()
+	for each in lnames:
+		locality_names[each[0]] = each[1]
 
         for each in data:
             id_group_map[each[0]] = each[1]  # data in form of L1 G1, L2 G2 ..
@@ -105,14 +112,15 @@ def right_clusters():
                 converge = converge + \
                     make_changes(
                         right_cluster[each[0]], id_group_map, group_flags, each[0])
+		if before_converge ==2 and converge>0:
+            		pdb.set_trace()
             print converge
-            # pdb.set_trace()
     for ele in id_group_map.keys():
         csum = cluster_sum(id_group_map[ele], id_score_map, group_flags[ele])
         if csum > 0:
             cluster = filter_list(
-                id_group_map[ele], id_score_map, group_flags[ele])
-            print cluster, round(csum)
+                id_group_map[ele], id_score_map, group_flags[ele], locality_names)
+            print cluster, csum
             cluster_sets = cluster_sets + cluster
             setsum = setsum + round(csum)
     setunion = set(cluster_sets)
